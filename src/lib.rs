@@ -1,22 +1,16 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use std::{sync::Mutex, collections::HashMap, process, io::Write, net::SocketAddr};
-use anyhow::Error;
-use anyhow::Ok;
+use anyhow::{Error, Ok};
 use config::{Config, FileFormat};
 use serde::Deserialize;
-// use futures::executor::block_on;
-// use futures::future::join_all;
-use std::future::Future;
-
-
+use volo_gen::mini::redis::RedisRequest;
 
 pub struct S {
     pub map: Mutex<HashMap<String, String>>,
     pub aof_path: String,
     pub is_main: bool,
 }
-
 
 pub struct P {
 
@@ -95,7 +89,7 @@ impl volo_gen::mini::redis::RedisService for S {
                 if let Err(err) = append_to_aof(&self, &req) {
                     tracing::error!("Failed to append to AOF file: {:?}", err);
                 }
-                let _ = send_to_slave(&req).await;
+                let _ = send_to_slave(&req);
                 return Ok(volo_gen::mini::redis::RedisResponse {
                     value: Some(format!("(integer) {}", count).into()),
                     response_type: volo_gen::mini::redis::ResponseType::Value,
@@ -117,7 +111,6 @@ impl volo_gen::mini::redis::RedisSync for S {
         req: volo_gen::mini::redis::RedisRequest,
     ) -> ::core::result::Result<volo_gen::mini::redis::RedisResponse, ::volo_thrift::AnyhowError>
     {
-        // println!("set slave!");
         match req.request_type {
             volo_gen::mini::redis::RequestType::Set => {
                 let _ = self.map.lock().unwrap().insert(req.clone().key.unwrap().get(0).unwrap().to_string(), req.clone().value.unwrap().to_string(),);
@@ -160,26 +153,19 @@ impl volo_gen::mini::redis::RedisProxy for P {
         let mut addr = String::new();
 
         match req.request_type {
-            volo_gen::mini::redis::RequestType::Ping => {
-                // println!("here is ping!");
-                addr = main_node.address.to_string();
-            }
             volo_gen::mini::redis::RequestType::Set => {
-                // println!("here is set!");
                 addr = main_node.address.to_string();
             }
             volo_gen::mini::redis::RequestType::Get => {
-                // let temp_string = req.clone().key.unwrap().get(0).unwrap().to_string();
-                // let byte = temp_string.as_bytes();
-                // let first_byte = byte[0];
-                // if first_byte % nodes_num as u8 == 0 {
-                //     addr = main_node.address.to_string();
-                //     println!("GET address is {}",addr);
-                // }else{
-                //     addr = slave_nodes[(first_byte % nodes_num as u8)as usize-1].address.to_string();
-                //     println!("GET address is {}",addr);
-                // }
-                addr = main_node.address.to_string();
+                 let temp_string = req.clone().key.unwrap().get(0).unwrap().to_string();
+                 let byte = temp_string.as_bytes();
+                 let first_byte = byte[0];
+                 if first_byte % nodes_num as u8 == 0 {
+                     addr = main_node.address.to_string();
+                 }else{
+                     addr = slave_nodes[first_byte as usize-1].address.to_string();
+                 }
+                //addr = slave_nodes[0].address.to_string();
             }
             volo_gen::mini::redis::RequestType::Del => {
                 addr = main_node.address.to_string();
@@ -189,7 +175,7 @@ impl volo_gen::mini::redis::RedisProxy for P {
             }
             _ => {}
         }
-        // println!("address is {}",addr);
+        println!("address is {}",addr);
         let proxy: volo_gen::mini::redis::RedisServiceClient = {
             let addr: SocketAddr = addr.parse().unwrap();
             volo_gen::mini::redis::RedisServiceClientBuilder::new("volo-mini-redis")
@@ -197,11 +183,9 @@ impl volo_gen::mini::redis::RedisProxy for P {
                 .address(addr)
                 .build()
         };
-        let resp = proxy.redis_command(req).await.map_err(|err| {
-        let err: ::volo_thrift::AnyhowError = err.into(); // Convert to AnyhowError
-        err
-        });
-        resp
+        let _ = proxy.redis_command(req).await;
+
+        Ok(Default::default())
     }
 }
 
@@ -239,39 +223,19 @@ fn format_redis_operation(req: &volo_gen::mini::redis::RedisRequest) -> String {
 }
 
 async fn send_to_slave(req: &volo_gen::mini::redis::RedisRequest) -> Result<(), std::io::Error> {
-    // println!("send to slave!");
     let mut settings = Config::new();
     settings.merge(config::File::new("config", FileFormat::Toml).required(true)).unwrap();
     let redis_config: RedisConfig = settings.try_into().unwrap();
     let slave_nodes = redis_config.slave_nodes;
     for slave_node in slave_nodes {
-        // println!("in the loop!");
         let slave: volo_gen::mini::redis::RedisSyncClient = {
             let addr: SocketAddr = slave_node.address;
             volo_gen::mini::redis::RedisSyncClientBuilder::new("send-to-slave-node")
                 .address(addr)
                 .build()
         };
-
-        // println!("the slave address is {}",addr);
         let _ = slave.set_slave(req.clone());
     }
-
-    // let futures: Vec<_> = slave_nodes.into_iter().map(|slave_node| {
-    //     let addr: SocketAddr = slave_node.address;
-    //     let slave: volo_gen::mini::redis::RedisSyncClient = volo_gen::mini::redis::RedisSyncClientBuilder::new("send-to-slave-node")
-    //         .address(addr)
-    //         .build();
-
-    //     async move {
-    //         // 执行异步操作并等待结果
-    //         let _ = slave.set_slave(req.clone()).await;
-    //     }
-    // }).collect();
-
-    // // 启动并行任务并等待它们完成
-    // futures::future::join_all(futures).await;
-
     std::result::Result::Ok(())
 }
 
