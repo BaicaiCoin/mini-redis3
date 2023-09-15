@@ -30,7 +30,7 @@ fn main(){
     let server_path = current_exe
         .parent()
         .expect("Failed to get parent directory")
-        .join("server.exe");
+        .join("server");
     
     let mut master = Command::new(server_path)
     .arg(main_node.address.to_string())
@@ -44,7 +44,7 @@ fn main(){
         let server_path = current_exe
         .parent()
         .expect("Failed to get parent directory")
-        .join("server.exe");
+        .join("server");
         let mut slave = Command::new(server_path)
         .arg(node.address.to_string())
         .arg(node.is_main.to_string())
@@ -56,7 +56,7 @@ fn main(){
     let proxy_path = current_exe
         .parent()
         .expect("Failed to get parent directory")
-        .join("proxy.exe");
+        .join("proxy");
     let mut proxy = Command::new(proxy_path)
     .spawn()
     .expect("Failed to open proxy server");
